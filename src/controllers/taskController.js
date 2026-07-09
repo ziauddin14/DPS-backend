@@ -1,0 +1,150 @@
+import mongoose from 'mongoose';
+import { Task } from '../models/Task.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import { sendSuccess, sendError } from '../utils/apiResponse.js';
+
+/**
+ * @desc    Get all tasks
+ * @route   GET /api/v1/tasks
+ * @access  Public
+ */
+export const getAllTasks = asyncHandler(async (req, res) => {
+  const { search, priority, status, category } = req.query;
+  const filter = {};
+
+  // Search inside title or description (case-insensitive regex)
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    filter.$or = [
+      { title: searchRegex },
+      { description: searchRegex },
+    ];
+  }
+
+  // Exact filters, skipping 'All'
+  if (priority && priority !== 'All') {
+    filter.priority = priority;
+  }
+
+  if (status && status !== 'All') {
+    filter.status = status;
+  }
+
+  if (category && category !== 'All') {
+    filter.category = category;
+  }
+
+  const tasks = await Task.find(filter).sort({ createdAt: -1 });
+  
+  // Dynamically get unique categories from existing tasks
+  const categories = await Task.distinct('category');
+
+  return sendSuccess(res, 'Tasks retrieved successfully', { tasks, categories }, 200);
+});
+
+/**
+ * @desc    Get a single task by ID
+ * @route   GET /api/v1/tasks/:id
+ * @access  Public
+ */
+export const getTaskById = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return sendError(res, 'Invalid task ID format', null, 400);
+  }
+
+  const task = await Task.findById(id);
+  if (!task) {
+    return sendError(res, 'Task not found', null, 404);
+  }
+
+  return sendSuccess(res, 'Task retrieved successfully', task, 200);
+});
+
+/**
+ * @desc    Create a new task
+ * @route   POST /api/v1/tasks
+ * @access  Public
+ */
+export const createTask = asyncHandler(async (req, res) => {
+  const { title, description, priority, status, category, deadline, completed } = req.body;
+
+  // Validation
+  if (!title) {
+    return sendError(res, 'Title is required', null, 400);
+  }
+
+  try {
+    const task = await Task.create({
+      title,
+      description,
+      priority,
+      status,
+      category,
+      deadline,
+      completed,
+    });
+
+    return sendSuccess(res, 'Task created successfully', task, 201);
+  } catch (error) {
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map((val) => val.message);
+      return sendError(res, messages.join(', '), null, 400);
+    }
+    throw error;
+  }
+});
+
+/**
+ * @desc    Update a task by ID
+ * @route   PUT /api/v1/tasks/:id
+ * @access  Public
+ */
+export const updateTask = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return sendError(res, 'Invalid task ID format', null, 400);
+  }
+
+  try {
+    const task = await Task.findByIdAndUpdate(
+      id,
+      { $set: req.body },
+      { new: true, runValidators: true }
+    );
+
+    if (!task) {
+      return sendError(res, 'Task not found', null, 404);
+    }
+
+    return sendSuccess(res, 'Task updated successfully', task, 200);
+  } catch (error) {
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map((val) => val.message);
+      return sendError(res, messages.join(', '), null, 400);
+    }
+    throw error;
+  }
+});
+
+/**
+ * @desc    Delete a task by ID
+ * @route   DELETE /api/v1/tasks/:id
+ * @access  Public
+ */
+export const deleteTask = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    return sendError(res, 'Invalid task ID format', null, 400);
+  }
+
+  const task = await Task.findByIdAndDelete(id);
+  if (!task) {
+    return sendError(res, 'Task not found', null, 404);
+  }
+
+  return sendSuccess(res, 'Task deleted successfully', null, 200);
+});
