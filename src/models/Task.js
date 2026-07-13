@@ -34,6 +34,14 @@ const TaskSchema = new mongoose.Schema(
       type: String,
       default: 'General',
     },
+    department: {
+      type: String,
+      default: 'General',
+    },
+    dependency: {
+      type: String,
+      default: 'None',
+    },
     deadline: {
       type: Date,
     },

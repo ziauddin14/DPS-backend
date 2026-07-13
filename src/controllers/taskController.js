@@ -9,7 +9,7 @@ import { sendSuccess, sendError } from '../utils/apiResponse.js';
  * @access  Public
  */
 export const getAllTasks = asyncHandler(async (req, res) => {
-  const { search, priority, status, category } = req.query;
+  const { search, priority, status, category, department, dependency } = req.query;
   const filter = {};
 
   // Search inside title or description (case-insensitive regex)
@@ -34,12 +34,22 @@ export const getAllTasks = asyncHandler(async (req, res) => {
     filter.category = category;
   }
 
+  if (department && department !== 'All') {
+    filter.department = department;
+  }
+
+  if (dependency && dependency !== 'All') {
+    filter.dependency = dependency;
+  }
+
   const tasks = await Task.find(filter).sort({ createdAt: -1 });
-  
+
   // Dynamically get unique categories from existing tasks
   const categories = await Task.distinct('category');
+  // Dynamically get unique departments from existing tasks
+  const departments = await Task.distinct('department');
 
-  return sendSuccess(res, 'Tasks retrieved successfully', { tasks, categories }, 200);
+  return sendSuccess(res, 'Tasks retrieved successfully', { tasks, categories, departments }, 200);
 });
 
 /**
@@ -68,7 +78,8 @@ export const getTaskById = asyncHandler(async (req, res) => {
  * @access  Public
  */
 export const createTask = asyncHandler(async (req, res) => {
-  const { title, description, priority, status, category, deadline, completed } = req.body;
+  
+  const { title, description, priority, status, category, department, dependency, deadline, completed } = req.body;
 
   // Validation
   if (!title) {
@@ -82,6 +93,8 @@ export const createTask = asyncHandler(async (req, res) => {
       priority,
       status,
       category,
+      department,
+      dependency,
       deadline,
       completed,
     });
