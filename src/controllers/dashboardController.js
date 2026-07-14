@@ -3,6 +3,7 @@ import { Goal } from '../models/Goal.js';
 import { Event } from '../models/Event.js';
 import { Project } from '../models/Project.js';
 import { Knowledge } from '../models/Knowledge.js';
+import { FollowUp } from '../models/FollowUp.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 
@@ -22,9 +23,11 @@ export const getDashboardData = asyncHandler(async (req, res) => {
   const [
     totalTasks,
     pendingTasks,
+    inProgressTasks,
     completedTasks,
     totalGoals,
     completedGoals,
+    activeGoals,
     inProgressGoals,
     totalProjects,
     completedProjects,
@@ -34,15 +37,18 @@ export const getDashboardData = asyncHandler(async (req, res) => {
     recentNotes,
     todayEvents,
     upcomingEvents,
+    todayFollowups,
   ] = await Promise.all([
     // Tasks stats
     Task.countDocuments({}),
-    Task.countDocuments({ status: { $ne: 'Completed' } }),
+    Task.countDocuments({ status: 'Pending' }),
+    Task.countDocuments({ status: 'In Progress' }),
     Task.countDocuments({ status: 'Completed' }),
 
     // Goals stats
     Goal.countDocuments({}),
     Goal.countDocuments({ status: 'Completed' }),
+    Goal.countDocuments({ status: { $ne: 'Completed' } }),
     Goal.countDocuments({ status: 'In Progress' }),
 
     // Projects stats
@@ -58,17 +64,25 @@ export const getDashboardData = asyncHandler(async (req, res) => {
     // Calendar events
     Event.find({ startDate: { $gte: startOfToday, $lte: endOfToday } }).sort({ startDate: 1 }),
     Event.find({ startDate: { $gt: endOfToday } }).sort({ startDate: 1 }).limit(5),
+
+    // Follow-ups stats
+    FollowUp.countDocuments({
+      nextFollowupDate: { $gte: startOfToday, $lte: endOfToday },
+      status: { $ne: 'Completed' }
+    }),
   ]);
 
   const dashboardData = {
     tasks: {
       total: totalTasks,
       pending: pendingTasks,
+      inProgress: inProgressTasks,
       completed: completedTasks,
     },
     goals: {
       total: totalGoals,
       completed: completedGoals,
+      active: activeGoals,
       inProgress: inProgressGoals,
     },
     calendar: {
@@ -84,6 +98,9 @@ export const getDashboardData = asyncHandler(async (req, res) => {
     knowledge: {
       total: totalKnowledge,
       recentNotes,
+    },
+    followups: {
+      todayFollowups,
     },
   };
 
