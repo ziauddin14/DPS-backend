@@ -8,6 +8,7 @@ import projectRoutes from './routes/projectRoutes.js';
 import knowledgeRoutes from './routes/knowledgeRoutes.js';
 import dashboardRoutes from './routes/dashboardRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
+import followupRoutes from './routes/followupRoutes.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 
 const app = express();
@@ -30,6 +31,7 @@ app.use('/api/v1/projects', projectRoutes);
 app.use('/api/v1/knowledge', knowledgeRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/settings', settingsRoutes);
+app.use('/api/v1/followups', followupRoutes);
 
 /**
  * Health check endpoint.
