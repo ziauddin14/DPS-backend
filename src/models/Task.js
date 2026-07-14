@@ -39,8 +39,8 @@ const TaskSchema = new mongoose.Schema(
       default: 'General',
     },
     dependency: {
-      type: String,
-      default: 'None',
+      type: [String],
+      default: [],
     },
     deadline: {
       type: Date,

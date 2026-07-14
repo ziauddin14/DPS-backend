@@ -39,7 +39,7 @@ export const getAllTasks = asyncHandler(async (req, res) => {
   }
 
   if (dependency && dependency !== 'All') {
-    filter.dependency = dependency;
+    filter.dependency = { $in: [dependency] };
   }
 
   const tasks = await Task.find(filter).sort({ createdAt: -1 });
@@ -86,6 +86,14 @@ export const createTask = asyncHandler(async (req, res) => {
     return sendError(res, 'Title is required', null, 400);
   }
 
+  // Handle dependency: convert string to array for backward compatibility
+  let dependencyArray = [];
+  if (Array.isArray(dependency)) {
+    dependencyArray = dependency;
+  } else if (typeof dependency === 'string' && dependency.trim() !== '') {
+    dependencyArray = [dependency];
+  }
+
   try {
     const task = await Task.create({
       title,
@@ -94,7 +102,7 @@ export const createTask = asyncHandler(async (req, res) => {
       status,
       category,
       department,
-      dependency,
+      dependency: dependencyArray,
       deadline,
       completed,
     });
@@ -116,15 +124,28 @@ export const createTask = asyncHandler(async (req, res) => {
  */
 export const updateTask = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const { dependency, ...otherFields } = req.body;
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return sendError(res, 'Invalid task ID format', null, 400);
   }
 
+  // Handle dependency: convert string to array for backward compatibility
+  let updateData = { ...otherFields };
+  if (dependency !== undefined) {
+    if (Array.isArray(dependency)) {
+      updateData.dependency = dependency;
+    } else if (typeof dependency === 'string' && dependency.trim() !== '') {
+      updateData.dependency = [dependency];
+    } else {
+      updateData.dependency = [];
+    }
+  }
+
   try {
     const task = await Task.findByIdAndUpdate(
       id,
-      { $set: req.body },
+      { $set: updateData },
       { new: true, runValidators: true }
     );
 
