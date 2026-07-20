@@ -49,6 +49,18 @@ const TaskSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    convertedTo: {
+      type: String,
+      enum: {
+        values: ['Followup', 'Project'],
+        message: '{VALUE} is not a valid conversion type',
+      },
+      default: null,
+    },
+    convertedReference: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
   },
   {
     timestamps: true,
