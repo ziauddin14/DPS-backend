@@ -35,6 +35,11 @@ const FollowUpSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Task',
     },
+    relatedProject: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Project',
+      default: null,
+    },
     priority: {
       type: String,
       enum: {

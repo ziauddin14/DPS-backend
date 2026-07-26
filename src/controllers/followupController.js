@@ -59,7 +59,10 @@ export const getAllFollowUps = asyncHandler(async (req, res) => {
     }
   }
 
-  const followups = await FollowUp.find(filter).sort({ nextFollowupDate: 1 });
+  const followups = await FollowUp.find(filter)
+    .populate('relatedTask', 'title')
+    .populate('relatedProject', 'title')
+    .sort({ nextFollowupDate: 1 });
 
   // Dynamically get unique departments from existing follow-ups
   const departments = await FollowUp.distinct('department');
@@ -79,7 +82,9 @@ export const getFollowUpById = asyncHandler(async (req, res) => {
     return sendError(res, 'Invalid follow-up ID format', null, 400);
   }
 
-  const followup = await FollowUp.findById(id);
+  const followup = await FollowUp.findById(id)
+    .populate('relatedTask', 'title')
+    .populate('relatedProject', 'title');
 
   if (!followup) {
     return sendError(res, 'Follow-up not found', null, 404);
@@ -101,6 +106,7 @@ export const createFollowUp = asyncHandler(async (req, res) => {
     subject,
     description,
     relatedTask,
+    relatedProject,
     priority,
     status,
     nextFollowupDate,
@@ -129,7 +135,8 @@ export const createFollowUp = asyncHandler(async (req, res) => {
       phoneNumber,
       subject,
       description,
-      relatedTask,
+      relatedTask: relatedTask || null,
+      relatedProject: relatedProject || null,
       priority,
       status,
       nextFollowupDate,
@@ -161,11 +168,17 @@ export const updateFollowUp = asyncHandler(async (req, res) => {
   }
 
   try {
+    const updateData = { ...req.body };
+    if (updateData.relatedTask === '') updateData.relatedTask = null;
+    if (updateData.relatedProject === '') updateData.relatedProject = null;
+
     const followup = await FollowUp.findByIdAndUpdate(
       id,
-      { $set: req.body },
+      { $set: updateData },
       { new: true, runValidators: true }
-    );
+    )
+      .populate('relatedTask', 'title')
+      .populate('relatedProject', 'title');
 
     if (!followup) {
       return sendError(res, 'Follow-up not found', null, 404);
