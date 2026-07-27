@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 import aiService from '../services/aiService.js';
+import { orchestrateAction } from '../services/aiActionOrchestrator.js';
 import Conversation from '../models/Conversation.js';
 
 /**
@@ -54,26 +55,66 @@ export const chat = asyncHandler(async (req, res) => {
   });
 
   try {
-    // 3. Call AI Service (passing current conversation history from database or body fallback)
+    // 3. Build conversation history for context
     const contextHistory =
       conversationDoc.messages.length > 1
         ? conversationDoc.messages.slice(0, -1).map((m) => ({ sender: m.role, text: m.content }))
         : conversationHistory;
 
-    const result = await aiService.generateResponse({
+    // 4. Try AI Action Orchestrator first (for autonomous actions)
+    const actionResult = await orchestrateAction({
       message: trimmedMessage,
       conversationHistory: contextHistory,
+      conversationId: conversationDoc._id.toString(),
     });
 
-    // 4. Append AI Assistant response to MongoDB document
+    let finalReply;
+    let finalModel;
+    let finalUsage;
+    let finalResponseTime;
+    let finalIsMock;
+    let finalSuggestions;
+    let finalToolUsed;
+    let finalIsAction;
+
+    // 5. If action was orchestrated, use that response
+    if (actionResult.isAction && actionResult.reply) {
+      finalReply = actionResult.reply;
+      finalModel = actionResult.toolUsed || 'action-orchestrator';
+      finalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      finalResponseTime = 0;
+      finalIsMock = actionResult.executionResult?.isMock || false;
+      finalSuggestions = actionResult.suggestions || [];
+      finalToolUsed = actionResult.toolUsed;
+      finalIsAction = true;
+    } else {
+      // 6. Fall back to normal AI conversation
+      const result = await aiService.generateResponse({
+        message: trimmedMessage,
+        conversationHistory: contextHistory,
+      });
+
+      finalReply = result.reply;
+      finalModel = result.model;
+      finalUsage = result.usage;
+      finalResponseTime = result.responseTime;
+      finalIsMock = result.isMock;
+      finalSuggestions = [];
+      finalToolUsed = null;
+      finalIsAction = false;
+    }
+
+    // 7. Append AI Assistant response to MongoDB document
     conversationDoc.messages.push({
       role: 'assistant',
-      content: result.reply,
+      content: finalReply,
       metadata: {
-        model: result.model,
-        tokens: result.usage?.totalTokens || 0,
-        responseTime: result.responseTime || 0,
-        isMock: result.isMock || false,
+        model: finalModel,
+        tokens: finalUsage?.totalTokens || 0,
+        responseTime: finalResponseTime || 0,
+        isMock: finalIsMock || false,
+        toolUsed: finalToolUsed,
+        isAction: finalIsAction,
       },
       createdAt: new Date(),
     });
@@ -86,19 +127,22 @@ export const chat = asyncHandler(async (req, res) => {
     // Save document to MongoDB
     await conversationDoc.save();
 
-    // 5. Return Standardized DPS API Response with conversationId
+    // 8. Return Standardized DPS API Response with conversationId
     return sendSuccess(
       res,
       'AI response generated successfully',
       {
         conversationId: conversationDoc._id,
-        reply: result.reply,
-        message: result.reply, // Dual format compatibility
-        model: result.model,
-        usage: result.usage,
-        responseTime: result.responseTime,
-        finishReason: result.finishReason,
-        isMock: result.isMock,
+        reply: finalReply,
+        message: finalReply, // Dual format compatibility
+        model: finalModel,
+        usage: finalUsage,
+        responseTime: finalResponseTime,
+        finishReason: finalIsAction ? 'tool_call' : 'stop',
+        isMock: finalIsMock,
+        suggestions: finalSuggestions,
+        toolUsed: finalToolUsed,
+        isAction: finalIsAction,
       },
       200
     );

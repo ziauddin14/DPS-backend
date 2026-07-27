@@ -6,6 +6,7 @@ import Event from '../models/Event.js';
 import FollowUp from '../models/FollowUp.js';
 import Knowledge from '../models/Knowledge.js';
 import WorkLog from '../models/WorkLog.js';
+import mongoose from 'mongoose';
 
 // ============================================================
 //  IN-MEMORY AUDIT LOG STORE
@@ -33,9 +34,43 @@ function recordAuditLog({ conversationId, tool, status, executionTimeMs, paramet
     executionAuditLogs.pop();
   }
 
-  console.log(
-    `[ToolExecutor] ${status} | Tool: ${tool} | Duration: ${executionTimeMs}ms | ConvId: ${conversationId || 'N/A'}${error ? ` | Error: ${error}` : ''}`
-  );
+  // Audit log recorded (no console.log per BUG #2 fix)
+}
+
+// ============================================================
+//  VALIDATION HELPERS
+// ============================================================
+
+/**
+ * Validate MongoDB ObjectId format
+ */
+function isValidObjectId(id) {
+  if (!id || typeof id !== 'string') return false;
+  return mongoose.Types.ObjectId.isValid(id);
+}
+
+/**
+ * Check for duplicate task title
+ */
+async function isDuplicateTask(title) {
+  const existing = await Task.findOne({ title: title.trim() });
+  return existing !== null;
+}
+
+/**
+ * Check for duplicate goal title
+ */
+async function isDuplicateGoal(title) {
+  const existing = await Goal.findOne({ title: title.trim() });
+  return existing !== null;
+}
+
+/**
+ * Check for duplicate project title
+ */
+async function isDuplicateProject(title) {
+  const existing = await Project.findOne({ title: title.trim() });
+  return existing !== null;
 }
 
 // ============================================================
@@ -45,6 +80,12 @@ function recordAuditLog({ conversationId, tool, status, executionTimeMs, paramet
 const HANDLERS = {
   // ── TASKS ─────────────────────────────────────────────────
   createTask: async (params) => {
+    // Duplicate validation
+    const duplicate = await isDuplicateTask(params.title);
+    if (duplicate) {
+      throw new Error(`A task with the title "${params.title}" already exists.`);
+    }
+    
     const task = await Task.create({
       title: params.title,
       description: params.description || '',
@@ -60,6 +101,9 @@ const HANDLERS = {
 
   updateTask: async (params) => {
     const { id, ...updates } = params;
+    if (!isValidObjectId(id)) {
+      throw new Error(`Invalid task ID format: '${id}'.`);
+    }
     if (updates.deadline) updates.deadline = new Date(updates.deadline);
     const task = await Task.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
     if (!task) throw new Error(`Task with ID '${id}' not found.`);
@@ -67,12 +111,18 @@ const HANDLERS = {
   },
 
   deleteTask: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid task ID format: '${params.id}'.`);
+    }
     const task = await Task.findByIdAndDelete(params.id);
     if (!task) throw new Error(`Task with ID '${params.id}' not found.`);
     return { id: params.id, deleted: true };
   },
 
   getTask: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid task ID format: '${params.id}'.`);
+    }
     const task = await Task.findById(params.id);
     if (!task) throw new Error(`Task with ID '${params.id}' not found.`);
     return task;
@@ -89,6 +139,9 @@ const HANDLERS = {
   },
 
   completeTask: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid task ID format: '${params.id}'.`);
+    }
     const task = await Task.findByIdAndUpdate(
       params.id,
       { status: 'Completed', completed: true },
@@ -100,6 +153,12 @@ const HANDLERS = {
 
   // ── GOALS ─────────────────────────────────────────────────
   createGoal: async (params) => {
+    // Duplicate validation
+    const duplicate = await isDuplicateGoal(params.title);
+    if (duplicate) {
+      throw new Error(`A goal with the title "${params.title}" already exists.`);
+    }
+    
     const goal = await Goal.create({
       title: params.title,
       description: params.description || '',
@@ -113,6 +172,9 @@ const HANDLERS = {
 
   updateGoal: async (params) => {
     const { id, deadline, ...updates } = params;
+    if (!isValidObjectId(id)) {
+      throw new Error(`Invalid goal ID format: '${id}'.`);
+    }
     if (deadline) updates.targetDate = new Date(deadline);
     const goal = await Goal.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
     if (!goal) throw new Error(`Goal with ID '${id}' not found.`);
@@ -120,6 +182,9 @@ const HANDLERS = {
   },
 
   deleteGoal: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid goal ID format: '${params.id}'.`);
+    }
     const goal = await Goal.findByIdAndDelete(params.id);
     if (!goal) throw new Error(`Goal with ID '${params.id}' not found.`);
     return { id: params.id, deleted: true };
@@ -136,6 +201,12 @@ const HANDLERS = {
 
   // ── PROJECTS ──────────────────────────────────────────────
   createProject: async (params) => {
+    // Duplicate validation
+    const duplicate = await isDuplicateProject(params.title);
+    if (duplicate) {
+      throw new Error(`A project with the title "${params.title}" already exists.`);
+    }
+    
     const project = await Project.create({
       title: params.title,
       description: params.description || '',
@@ -150,6 +221,9 @@ const HANDLERS = {
 
   updateProject: async (params) => {
     const { id, endDate, ...updates } = params;
+    if (!isValidObjectId(id)) {
+      throw new Error(`Invalid project ID format: '${id}'.`);
+    }
     if (endDate) updates.deadline = new Date(endDate);
     const project = await Project.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
     if (!project) throw new Error(`Project with ID '${id}' not found.`);
@@ -157,6 +231,9 @@ const HANDLERS = {
   },
 
   deleteProject: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid project ID format: '${params.id}'.`);
+    }
     const project = await Project.findByIdAndDelete(params.id);
     if (!project) throw new Error(`Project with ID '${params.id}' not found.`);
     return { id: params.id, deleted: true };
@@ -187,6 +264,9 @@ const HANDLERS = {
 
   updateMeeting: async (params) => {
     const { id, date, startTime, ...updates } = params;
+    if (!isValidObjectId(id)) {
+      throw new Error(`Invalid meeting ID format: '${id}'.`);
+    }
     if (date) updates.startDate = new Date(date);
     if (startTime) updates.time = startTime;
     const meeting = await Event.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
@@ -195,6 +275,9 @@ const HANDLERS = {
   },
 
   deleteMeeting: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid meeting ID format: '${params.id}'.`);
+    }
     const meeting = await Event.findByIdAndDelete(params.id);
     if (!meeting) throw new Error(`Meeting with ID '${params.id}' not found.`);
     return { id: params.id, deleted: true };
@@ -228,6 +311,9 @@ const HANDLERS = {
 
   updateFollowUp: async (params) => {
     const { id, followUpDate, ...updates } = params;
+    if (!isValidObjectId(id)) {
+      throw new Error(`Invalid follow-up ID format: '${id}'.`);
+    }
     if (followUpDate) updates.nextFollowupDate = new Date(followUpDate);
     const followup = await FollowUp.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
     if (!followup) throw new Error(`Follow-up with ID '${id}' not found.`);
@@ -235,6 +321,9 @@ const HANDLERS = {
   },
 
   deleteFollowUp: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid follow-up ID format: '${params.id}'.`);
+    }
     const followup = await FollowUp.findByIdAndDelete(params.id);
     if (!followup) throw new Error(`Follow-up with ID '${params.id}' not found.`);
     return { id: params.id, deleted: true };
@@ -264,12 +353,18 @@ const HANDLERS = {
 
   updateKnowledge: async (params) => {
     const { id, ...updates } = params;
+    if (!isValidObjectId(id)) {
+      throw new Error(`Invalid knowledge ID format: '${id}'.`);
+    }
     const entry = await Knowledge.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
     if (!entry) throw new Error(`Knowledge entry with ID '${id}' not found.`);
     return entry;
   },
 
   deleteKnowledge: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid knowledge ID format: '${params.id}'.`);
+    }
     const entry = await Knowledge.findByIdAndDelete(params.id);
     if (!entry) throw new Error(`Knowledge entry with ID '${params.id}' not found.`);
     return { id: params.id, deleted: true };
@@ -292,6 +387,9 @@ const HANDLERS = {
   },
 
   getKnowledge: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid knowledge ID format: '${params.id}'.`);
+    }
     const entry = await Knowledge.findById(params.id);
     if (!entry) throw new Error(`Knowledge entry with ID '${params.id}' not found.`);
     return entry;
@@ -312,6 +410,9 @@ const HANDLERS = {
 
   updateWorkLog: async (params) => {
     const { id, hoursSpent, date, ...updates } = params;
+    if (!isValidObjectId(id)) {
+      throw new Error(`Invalid work log ID format: '${id}'.`);
+    }
     if (hoursSpent) updates.durationMinutes = Number(hoursSpent) * 60;
     if (date) updates.activityDate = new Date(date);
     const log = await WorkLog.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
@@ -320,6 +421,9 @@ const HANDLERS = {
   },
 
   deleteWorkLog: async (params) => {
+    if (!isValidObjectId(params.id)) {
+      throw new Error(`Invalid work log ID format: '${params.id}'.`);
+    }
     const log = await WorkLog.findByIdAndDelete(params.id);
     if (!log) throw new Error(`Work log with ID '${params.id}' not found.`);
     return { id: params.id, deleted: true };

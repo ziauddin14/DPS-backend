@@ -104,6 +104,14 @@ function formatDate(dateVal) {
 }
 
 /**
+ * Format time nicely for human display.
+ */
+function formatTime(timeVal) {
+  if (!timeVal) return 'TBD';
+  return timeVal;
+}
+
+/**
  * Cleanly format tool execution result into human-readable Markdown.
  */
 function formatToolSuccessResult(toolName, result, isUrdu = false) {
@@ -111,9 +119,10 @@ function formatToolSuccessResult(toolName, result, isUrdu = false) {
     // ── TASKS ───────────────────────────────────────────────
     case 'createTask':
       if (isUrdu) {
-        return `✅ Task **${result.title || 'N/A'}** kamyabi se bana di gayi hai!\n\n- **Priority**: ${result.priority || 'Medium'}\n- **Status**: ${result.status || 'Pending'}\n- **Category**: ${result.category || 'General'}`;
+        return `✅ Task **${result.title || 'N/A'}** kamyabi se bana di gayi hai!\n\n- **Title**: ${result.title || 'N/A'}\n- **Priority**: ${result.priority || 'Medium'}\n- **Status**: ${result.status || 'Pending'}\n- **Category**: ${result.category || 'General'}${result.deadline ? `\n- **Due Date**: ${formatDate(result.deadline)}` : ''}`;
       }
-      return `✅ Done! I've created your task **${result.title || 'N/A'}**.\n\n- **Priority**: ${result.priority || 'Medium'}\n- **Status**: ${result.status || 'Pending'}\n- **Category**: ${result.category || 'General'}${result.deadline ? `\n- **Due Date**: ${formatDate(result.deadline)}` : ''}`;
+      // BUG #4: Use actual MongoDB document data for verification
+      return `✅ Task created successfully.\n\n- **Title**: ${result.title || 'N/A'}\n- **Priority**: ${result.priority || 'Medium'}\n- **Status**: ${result.status || 'Pending'}\n- **Category**: ${result.category || 'General'}${result.deadline ? `\n- **Due Date**: ${formatDate(result.deadline)}` : ''}`;
 
     case 'updateTask':
       return `✏️ Task **${result.title || 'N/A'}** has been updated successfully.\n\n- **Status**: ${result.status || 'Pending'}\n- **Priority**: ${result.priority || 'Medium'}`;
@@ -310,12 +319,21 @@ export function generateResponse({ toolResult, originalPrompt = '', conversation
     };
   }
 
-  // 3. Execution Failure
+  // 3. Execution Failure (BUG #5: Natural failure verification without JSON/stack traces)
   if (toolResult.success === false) {
     const errorDetail = toolResult.error || 'An unexpected execution error occurred.';
+    
+    // Clean error message - remove any JSON-like content or stack traces
+    const cleanError = errorDetail
+      .replace(/\{[^}]*\}/g, '[details hidden]') // Remove JSON objects
+      .replace(/\[.*?\]/g, '[details hidden]') // Remove arrays
+      .replace(/at\s+.*?\.js:\d+:\d+/g, '') // Remove stack traces
+      .replace(/Error:\s*/gi, '')
+      .trim();
+    
     const reply = isUrdu
-      ? `⚠️ Maaf kijiyega, main ye action poora nahi kar saka: ${errorDetail}`
-      : `⚠️ Sorry, I couldn't complete that request.\n\n**Reason**: ${errorDetail}`;
+      ? `⚠️ Maaf kijiyega, main ye action poora nahi kar saka: ${cleanError}`
+      : `⚠️ Sorry, I couldn't complete that request.\n\n**Reason**: ${cleanError}`;
 
     return {
       reply,
