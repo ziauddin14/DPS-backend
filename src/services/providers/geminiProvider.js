@@ -113,5 +113,4 @@ export const geminiProvider = {
     }
   },
 };
-
 export default geminiProvider;
