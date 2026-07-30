@@ -59,114 +59,268 @@ function buildOpenAIToolSchemas() {
 }
 
 // ============================================================
-//  MOCK FUNCTION CALLING
-//  Used when OPENAI_API_KEY is absent or provider is unavailable.
-//  Performs lightweight keyword intent matching as a deterministic fallback.
+//  PRODUCTION-GRADE INTENT ENGINE
+//  Priority-based intent classification with confidence scoring
 // ============================================================
 
-// Explicit noun-based priority categories (higher priority = checked first)
-const INTENT_CATEGORIES = {
-  task: {
-    priority: 1,
-    nouns: ['task', 'todo', 'work item', 'finish task'],
-    tool: 'createTask',
-    missingParameters: ['title']
+// Intent Priority System (higher priority = checked first)
+const INTENT_PRIORITIES = {
+  // Priority 100 - Delete operations (highest)
+  delete: {
+    priority: 100,
+    keywords: ['delete', 'remove', 'erase', 'discard', 'cancel'],
+    tools: {
+      task: 'deleteTask',
+      meeting: 'deleteMeeting',
+      project: 'deleteProject',
+      followup: 'deleteFollowUp',
+      goal: 'deleteGoal',
+      knowledge: 'deleteKnowledge',
+      worklog: 'deleteWorkLog'
+    }
   },
-  meeting: {
-    priority: 2,
-    nouns: ['meeting', 'schedule meeting', 'book meeting', 'meeting tomorrow'],
-    tool: 'createMeeting',
-    missingParameters: ['title']
+  
+  // Priority 95 - Complete operations
+  complete: {
+    priority: 95,
+    keywords: ['complete', 'completed', 'done', 'finish', 'mark complete', 'mark completed'],
+    tools: {
+      task: 'completeTask'
+    }
   },
-  followup: {
-    priority: 3,
-    nouns: ['follow up', 'follow-up', 'call client', 'remind me to call'],
-    tool: 'createFollowUp',
-    missingParameters: ['title']
+  
+  // Priority 90 - Update operations
+  update: {
+    priority: 90,
+    keywords: ['update', 'change', 'edit', 'rename', 'modify', 'reschedule'],
+    tools: {
+      task: 'updateTask',
+      meeting: 'updateMeeting',
+      project: 'updateProject',
+      followup: 'updateFollowUp',
+      goal: 'updateGoal',
+      knowledge: 'updateKnowledge',
+      worklog: 'updateWorkLog'
+    }
   },
-  goal: {
-    priority: 4,
-    nouns: ['goal', 'weekly goal', 'monthly goal', 'yearly goal'],
-    tool: 'createGoal',
-    missingParameters: ['title']
+  
+  // Priority 85 - List/View operations
+  list: {
+    priority: 85,
+    keywords: ['show', 'list', 'display', 'view', 'my', 'all', 'pending', 'completed'],
+    tools: {
+      task: 'getTasks',
+      meeting: 'getMeetings',
+      project: 'getProjects',
+      followup: 'getFollowUps',
+      goal: 'getGoals',
+      knowledge: 'getKnowledge',
+      worklog: 'getWorkLogs',
+      dashboard: 'getDashboardStats',
+      calendar: 'getCalendarEvents',
+      agenda: 'getTodaysAgenda'
+    }
   },
-  project: {
-    priority: 5,
-    nouns: ['project', 'software project'],
-    tool: 'createProject',
-    missingParameters: ['title']
+  
+  // Priority 80 - Create operations (lowest)
+  create: {
+    priority: 80,
+    keywords: ['create', 'add', 'new', 'make', 'schedule', 'set', 'save'],
+    tools: {
+      task: 'createTask',
+      meeting: 'createMeeting',
+      project: 'createProject',
+      followup: 'createFollowUp',
+      goal: 'createGoal',
+      knowledge: 'createKnowledge',
+      worklog: 'createWorkLog'
+    }
   }
 };
 
-const MOCK_INTENT_PATTERNS = [
-  // Tasks - Phase A: Task Creation (highest priority for task-related)
-  { keywords: ['create a task', 'create task', 'add a task', 'add task', 'new task', 'finish task', 'todo', 'work item'], tool: 'createTask', missingParameters: ['title'], category: 'task' },
-  { keywords: ['high priority task', 'low priority task', 'medium priority task', 'priority task'], tool: 'createTask', missingParameters: ['title'], category: 'task' },
-  { keywords: ['create a high priority task', 'create high priority task'], tool: 'createTask', missingParameters: ['title'], category: 'task' },
-  { keywords: ['create a task tomorrow', 'create task tomorrow'], tool: 'createTask', missingParameters: ['title'], category: 'task' },
-  { keywords: ['create a task for', 'create task for', 'create a task with', 'create task with'], tool: 'createTask', missingParameters: ['title'], category: 'task' },
-  { keywords: ['create a recurring task', 'create recurring task', 'create a task with due date', 'create task with due date'], tool: 'createTask', missingParameters: ['title'], category: 'task' },
-  { keywords: ['create a task with description', 'create task with description', 'create a task with category', 'create task with category'], tool: 'createTask', missingParameters: ['title'], category: 'task' },
-  { keywords: ['create a task with labels', 'create task with labels', 'schedule a task', 'schedule task', 'set a task', 'set task'], tool: 'createTask', missingParameters: ['title'], category: 'task' },
+// Entity detection keywords
+const ENTITY_KEYWORDS = {
+  task: ['task', 'todo', 'work item', 'item'],
+  meeting: ['meeting', 'appointment', 'call', 'session'],
+  project: ['project', 'initiative', 'program'],
+  followup: ['follow up', 'follow-up', 'call', 'reminder', 'followup'],
+  goal: ['goal', 'objective', 'target', 'milestone'],
+  knowledge: ['note', 'knowledge', 'information', 'document'],
+  worklog: ['work log', 'log', 'hours', 'time'],
+  dashboard: ['dashboard', 'summary', 'overview', 'stats', 'statistics'],
+  calendar: ['calendar', 'schedule', 'agenda', 'events'],
+  agenda: ['agenda', "today's schedule", 'what do i have', "what's on my agenda"]
+};
+
+// Minimum confidence threshold for tool execution
+const MIN_CONFIDENCE_THRESHOLD = 0.65;
+
+// ============================================================
+//  CONFIDENCE SCORING ENGINE
+// ============================================================
+
+/**
+ * Calculate confidence score for an intent match based on keyword strength and context.
+ * @param {string} message - User message
+ * @param {string} intentType - Intent type (delete, update, list, create, complete)
+ * @param {string} entityType - Entity type (task, meeting, project, etc.)
+ * @returns {number} Confidence score between 0 and 1
+ */
+function calculateConfidence(message, intentType, entityType) {
+  const lowerMsg = message.toLowerCase();
+  let score = 0;
   
-  // Tasks - Phase B: Task Update
-  { keywords: ['update task', 'change task', 'edit task', 'modify task'], tool: 'updateTask', missingParameters: ['id'], category: 'task' },
-  { keywords: ['mark task completed', 'mark this task complete', 'mark task complete', 'mark this task as completed', 'mark task as completed'], tool: 'updateTask', missingParameters: ['id'], category: 'task' },
-  { keywords: ['update priority', 'change priority', 'change due date', 'update due date', 'rename task'], tool: 'updateTask', missingParameters: ['id'], category: 'task' },
-  { keywords: ['move task to', 'move task to another project', 'assign category', 'update description', 'change description'], tool: 'updateTask', missingParameters: ['id'], category: 'task' },
+  // Base score for entity match
+  const entityKeywords = ENTITY_KEYWORDS[entityType] || [];
+  const entityMatch = entityKeywords.some(kw => lowerMsg.includes(kw));
+  if (entityMatch) score += 0.4;
   
-  // Tasks - Phase C: Task Delete
-  { keywords: ['delete task', 'remove task', 'cancel task'], tool: 'deleteTask', missingParameters: ['id'], category: 'task' },
+  // Intent keyword score
+  const intentConfig = INTENT_PRIORITIES[intentType];
+  if (intentConfig) {
+    const intentMatch = intentConfig.keywords.some(kw => lowerMsg.includes(kw));
+    if (intentMatch) score += 0.5;
+  }
   
-  // Tasks - Phase D: List Tasks
-  { keywords: ['complete task', 'finish task', 'mark task done', 'mark done', 'task done'], tool: 'completeTask', missingParameters: ['id'], category: 'task' },
-  { keywords: ['show tasks', 'list tasks', 'my tasks', 'get tasks', 'pending tasks', 'today\'s tasks', "today's tasks", 'what tasks', 'show my tasks'], tool: 'getTasks', missingParameters: [], category: 'task' },
-  { keywords: ['show pending tasks', 'list pending tasks', 'show today\'s tasks', 'show today\'s task', 'show completed tasks', 'list completed tasks'], tool: 'getTasks', missingParameters: [], category: 'task' },
-  { keywords: ['show high priority tasks', 'list high priority tasks', 'show tasks due tomorrow', 'show tasks for', 'list tasks for'], tool: 'getTasks', missingParameters: [], category: 'task' },
-  { keywords: ['show overdue tasks', 'list overdue tasks', 'what are my tasks', 'display tasks'], tool: 'getTasks', missingParameters: [], category: 'task' },
+  // Bonus for explicit entity-intent combination
+  if (entityMatch && intentConfig && intentConfig.keywords.some(kw => lowerMsg.includes(kw))) {
+    score += 0.1;
+  }
   
-  // Meetings
-  { keywords: ['schedule meeting', 'book meeting', 'new meeting', 'meeting tomorrow'], tool: 'createMeeting', missingParameters: ['title'], category: 'meeting' },
-  { keywords: ['create a meeting', 'create meeting', 'add meeting'], tool: 'createMeeting', missingParameters: ['title'], category: 'meeting' },
-  { keywords: ['show meetings', 'list meetings', 'get meetings', 'my meetings', 'upcoming meetings', 'what meetings'], tool: 'getMeetings', missingParameters: [], category: 'meeting' },
-  { keywords: ['update meeting', 'edit meeting', 'change meeting', 'reschedule meeting'], tool: 'updateMeeting', missingParameters: ['id'], category: 'meeting' },
-  { keywords: ['delete meeting', 'cancel meeting', 'remove meeting'], tool: 'deleteMeeting', missingParameters: ['id'], category: 'meeting' },
+  // Penalty for ambiguous messages
+  if (lowerMsg.length < 5) score -= 0.2;
+  if (lowerMsg.split(' ').length < 3) score -= 0.1;
   
-  // Follow-ups
-  { keywords: ['create follow up', 'call client', 'remind me to call'], tool: 'createFollowUp', missingParameters: ['title'], category: 'followup' },
-  { keywords: ['follow up with', 'follow-up with'], tool: 'createFollowUp', missingParameters: ['title'], category: 'followup' },
-  { keywords: ['create a follow-up', 'create follow-up', 'add follow-up', 'new follow-up', 'new followup'], tool: 'createFollowUp', missingParameters: ['title'], category: 'followup' },
-  { keywords: ['show follow-ups', 'list follow-ups', 'get follow-ups', 'my follow-ups', 'what follow-ups'], tool: 'getFollowUps', missingParameters: [], category: 'followup' },
-  { keywords: ['update follow-up', 'edit follow-up', 'change follow-up'], tool: 'updateFollowUp', missingParameters: ['id'], category: 'followup' },
-  { keywords: ['delete follow-up', 'remove follow-up'], tool: 'deleteFollowUp', missingParameters: ['id'], category: 'followup' },
+  return Math.min(Math.max(score, 0), 1);
+}
+
+/**
+ * Detect entity type from message.
+ * @param {string} message - User message
+ * @returns {string|null} Entity type or null if not detected
+ */
+function detectEntityType(message) {
+  const lowerMsg = message.toLowerCase();
   
-  // Goals
-  { keywords: ['create goal', 'weekly goal', 'monthly goal', 'yearly goal'], tool: 'createGoal', missingParameters: ['title'], category: 'goal' },
-  { keywords: ['create a goal', 'add goal', 'new goal', 'set a goal', 'set goal'], tool: 'createGoal', missingParameters: ['title'], category: 'goal' },
-  { keywords: ['show goals', 'list goals', 'my goals', 'get goals', 'what are my goals'], tool: 'getGoals', missingParameters: [], category: 'goal' },
-  { keywords: ['update goal', 'edit goal', 'change goal'], tool: 'updateGoal', missingParameters: ['id'], category: 'goal' },
-  { keywords: ['delete goal', 'remove goal'], tool: 'deleteGoal', missingParameters: ['id'], category: 'goal' },
+  for (const [entityType, keywords] of Object.entries(ENTITY_KEYWORDS)) {
+    for (const keyword of keywords) {
+      if (lowerMsg.includes(keyword)) {
+        return entityType;
+      }
+    }
+  }
   
-  // Projects
-  { keywords: ['new project', 'create project', 'software project'], tool: 'createProject', missingParameters: ['title'], category: 'project' },
-  { keywords: ['create a project', 'start project', 'add project'], tool: 'createProject', missingParameters: ['title'], category: 'project' },
-  { keywords: ['show projects', 'list projects', 'get projects', 'my projects', 'what projects'], tool: 'getProjects', missingParameters: [], category: 'project' },
-  { keywords: ['update project', 'edit project', 'change project'], tool: 'updateProject', missingParameters: ['id'], category: 'project' },
-  { keywords: ['delete project', 'remove project'], tool: 'deleteProject', missingParameters: ['id'], category: 'project' },
+  return null;
+}
+
+/**
+ * Detect intent type from message based on priority.
+ * @param {string} message - User message
+ * @returns {object} Intent type and confidence
+ */
+function detectIntentType(message) {
+  const lowerMsg = message.toLowerCase();
   
-  // Knowledge
-  { keywords: ['create knowledge', 'add knowledge', 'save note', 'new knowledge', 'save to knowledge', 'save this note'], tool: 'createKnowledge', missingParameters: ['title', 'content'] },
-  { keywords: ['search knowledge', 'search my knowledge', 'find knowledge', 'look up knowledge', 'look up in knowledge', 'search the knowledge'], tool: 'searchKnowledge', missingParameters: ['query'] },
-  { keywords: ['get knowledge', 'show knowledge', 'retrieve knowledge'], tool: 'getKnowledge', missingParameters: ['id'] },
-  // Work Logs
-  { keywords: ['log work', 'log hours', 'log my work', 'track hours', 'add work log', 'record work', 'hours of work', 'hours on the', 'hours on project'], tool: 'createWorkLog', missingParameters: ['title', 'hoursSpent'] },
-  { keywords: ['show work logs', 'list work logs', 'my work logs', 'get work logs', 'what work logs'], tool: 'getWorkLogs', missingParameters: [] },
-  // Dashboard & Calendar - Phase F: Dashboard Summary
-  { keywords: ['dashboard', 'show dashboard', 'summary', 'overview', 'stats', 'statistics', 'show summary', 'dashboard summary', 'daily summary', 'work summary', 'today\'s overview', 'today overview', 'show my dashboard', 'get dashboard', 'view dashboard'], tool: 'getDashboardStats', missingParameters: [] },
-  { keywords: ['calendar', 'get calendar', 'show calendar', 'my events', 'get events', 'schedule for'], tool: 'getCalendarEvents', missingParameters: [] },
-  // Phase E: Today's Agenda (handled by orchestrator, but add patterns for completeness)
-  { keywords: ['agenda', 'what\'s my agenda today', 'what is my agenda today', 'what do i have today', 'what do i have', 'today\'s schedule', 'today schedule', 'today\'s tasks', 'today tasks', 'today\'s meetings', 'today meetings', 'today\'s follow-ups', 'today follow-ups', 'what\'s on my agenda', 'what is on my agenda', 'show my agenda', 'my agenda today'], tool: 'getDashboardStats', missingParameters: [] },
-];
+  // Check intents in priority order (highest first)
+  const sortedIntents = Object.entries(INTENT_PRIORITIES)
+    .sort((a, b) => b[1].priority - a[1].priority);
+  
+  for (const [intentType, config] of sortedIntents) {
+    for (const keyword of config.keywords) {
+      if (lowerMsg.includes(keyword)) {
+        return { intentType, keyword };
+      }
+    }
+  }
+  
+  // Default to create if no explicit intent detected but entity is present
+  const entityType = detectEntityType(message);
+  if (entityType) {
+    return { intentType: 'create', keyword: 'implicit' };
+  }
+  
+  return null;
+}
+
+// ============================================================
+//  CONVERSATION CONTEXT RESOLUTION
+// ============================================================
+
+/**
+ * Resolve reference words (it, that, latest, previous) using conversation history.
+ * @param {string} reference - Reference word (e.g., 'it', 'latest', 'that task')
+ * @param {Array} conversationHistory - Conversation history
+ * @returns {object|null} Resolved entity or null
+ */
+function resolveReference(reference, conversationHistory = []) {
+  const lowerRef = reference.toLowerCase();
+  
+  // Find the most recent relevant entity from conversation history
+  const reversedHistory = [...conversationHistory].reverse();
+  
+  for (const msg of reversedHistory) {
+    if (msg.sender === 'assistant' && msg.text) {
+      const text = msg.text.toLowerCase();
+      
+      // Look for task references
+      if (text.includes('task') && (lowerRef.includes('it') || lowerRef.includes('that') || lowerRef.includes('latest'))) {
+        // Extract task title from AI response (simple extraction)
+        const taskMatch = text.match(/task\s*["']?([^"'\n]+)/i);
+        if (taskMatch) {
+          return { type: 'task', value: taskMatch[1].trim() };
+        }
+      }
+      
+      // Look for meeting references
+      if (text.includes('meeting') && (lowerRef.includes('it') || lowerRef.includes('that') || lowerRef.includes('latest'))) {
+        const meetingMatch = text.match(/meeting\s*["']?([^"'\n]+)/i);
+        if (meetingMatch) {
+          return { type: 'meeting', value: meetingMatch[1].trim() };
+        }
+      }
+      
+      // Look for project references
+      if (text.includes('project') && (lowerRef.includes('it') || lowerRef.includes('that') || lowerRef.includes('latest'))) {
+        const projectMatch = text.match(/project\s*["']?([^"'\n]+)/i);
+        if (projectMatch) {
+          return { type: 'project', value: projectMatch[1].trim() };
+        }
+      }
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Extract target identifier from message (handles 'latest', 'previous', 'it', etc.)
+ * @param {string} message - User message
+ * @param {Array} conversationHistory - Conversation history
+ * @returns {object} Target identifier object
+ */
+function extractTargetIdentifier(message, conversationHistory = []) {
+  const lowerMsg = message.toLowerCase();
+  
+  // Check for reference words
+  if (lowerMsg.includes('latest') || lowerMsg.includes('previous') || lowerMsg.includes('it') || lowerMsg.includes('that')) {
+    const resolved = resolveReference(lowerMsg, conversationHistory);
+    if (resolved) {
+      return { type: 'reference', value: resolved.value, entityType: resolved.type };
+    }
+  }
+  
+  // Check for explicit title/name
+  const entityKeywords = ['task', 'meeting', 'project', 'followup', 'goal'];
+  for (const keyword of entityKeywords) {
+    const pattern = new RegExp(`${keyword}\s+["']?([^"'\n]+)`, 'i');
+    const match = message.match(pattern);
+    if (match) {
+      return { type: 'explicit', value: match[1].trim(), entityType: keyword };
+    }
+  }
+  
+  return { type: 'missing' };
+}
 
 // ============================================================
 //  NATURAL LANGUAGE PARAMETER EXTRACTION
@@ -285,123 +439,226 @@ function extractPriorityFromText(message) {
 }
 
 /**
- * Extract task title from message (removes action keywords).
+ * Extract title from message (removes action keywords and metadata).
  */
-function extractTitleFromMessage(message) {
+function extractTitleFromMessage(message, intentType, entityType) {
   let title = message.trim();
+  const lowerTitle = title.toLowerCase();
   
-  // Remove common action prefixes
-  const prefixes = [
-    'create a task', 'create task', 'add a task', 'add task', 'new task',
-    'create a high priority task', 'create high priority task',
-    'create a task for', 'create task for',
-    'remind me to', 'schedule a task', 'schedule task',
-    'set a task', 'set task',
-  ];
+  // Remove intent keywords based on detected intent
+  const intentConfig = INTENT_PRIORITIES[intentType];
+  if (intentConfig) {
+    for (const keyword of intentConfig.keywords) {
+      if (lowerTitle.includes(keyword)) {
+        title = title.replace(new RegExp(keyword, 'gi'), '').trim();
+      }
+    }
+  }
   
-  for (const prefix of prefixes) {
-    if (title.toLowerCase().startsWith(prefix)) {
-      title = title.substring(prefix.length).trim();
-      break;
+  // Remove entity keywords
+  const entityKeywords = ENTITY_KEYWORDS[entityType] || [];
+  for (const keyword of entityKeywords) {
+    if (lowerTitle.includes(keyword)) {
+      title = title.replace(new RegExp(keyword, 'gi'), '').trim();
     }
   }
   
   // Remove time expressions
-  title = title.replace(/\b(tomorrow|today|next monday|next tuesday|next wednesday|next thursday|next friday|next saturday|next sunday|in \d+ days?)\b/gi, '').trim();
+  title = title.replace(/\b(tomorrow|today|next monday|next tuesday|next wednesday|next thursday|next friday|next saturday|next sunday|in \d+ days?|at \d+ (am|pm))\b/gi, '').trim();
   
   // Remove priority expressions
   title = title.replace(/\b(high priority|low priority|medium priority|urgent|important)\b/gi, '').trim();
   
-  // Clean up extra spaces
+  // Clean up extra spaces and punctuation
   title = title.replace(/\s+/g, ' ').trim();
+  title = title.replace(/^[,\s]+|[,\s]+$/g, '');
   
   return title || null;
 }
 
 /**
- * Lightweight mock intent matcher for when no API is configured.
- * Uses deterministic noun-based priority routing to ensure correct tool selection.
- * @param {string} message - User message.
- * @returns {object} Structured tool call result.
+ * Extract time from message.
  */
-function mockFunctionCalling(message) {
+function extractTimeFromText(message) {
+  const lowerMsg = message.toLowerCase();
+  
+  // Match time patterns like "5 PM", "3:30 PM", "at 5"
+  const timeMatch = lowerMsg.match(/(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (timeMatch) {
+    const hours = parseInt(timeMatch[1]);
+    const minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    const ampm = timeMatch[3] ? timeMatch[3].toLowerCase() : null;
+    
+    if (ampm === 'pm' && hours < 12) {
+      return `${hours + 12}:${minutes.toString().padStart(2, '0')}`;
+    } else if (ampm === 'am' && hours === 12) {
+      return `0:${minutes.toString().padStart(2, '0')}`;
+    } else {
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Production-grade Intent Engine for when no API is configured.
+ * Uses priority-based intent classification with confidence scoring.
+ * @param {string} message - User message.
+ * @param {Array} conversationHistory - Conversation history for context resolution.
+ * @returns {object} Structured tool call result with confidence score.
+ */
+function mockFunctionCalling(message, conversationHistory = []) {
   const lowerMsg = message.toLowerCase().trim();
-
-  // Step 1: Check explicit noun-based categories with priority (BUG #1 fix)
-  for (const [categoryKey, category] of Object.entries(INTENT_CATEGORIES)) {
-    for (const noun of category.nouns) {
-      if (lowerMsg.includes(noun)) {
-        const result = {
-          shouldCallTool: true,
-          tool: category.tool,
-          parameters: {},
-          reason: `Matched explicit noun '${noun}' in category '${categoryKey}' with priority ${category.priority}`,
-          isMock: true,
-        };
-
-        // Extract parameters for creation tools
-        if (category.tool === 'createTask') {
-          const title = extractTitleFromMessage(message);
-          if (title) {
-            result.parameters.title = title;
-            result.missingParameters = category.missingParameters.filter(p => p !== 'title');
-          } else {
-            result.missingParameters = category.missingParameters;
-          }
-          
-          const date = extractDateFromText(message);
-          if (date) result.parameters.deadline = date;
-          
-          const priority = extractPriorityFromText(message);
-          if (priority) result.parameters.priority = priority;
-        } else {
-          result.missingParameters = category.missingParameters;
-        }
-
-        return result;
-      }
+  
+  // Step 1: Check for special requests first (dashboard, agenda, calendar)
+  if (lowerMsg.includes('dashboard') || lowerMsg.includes('summary') || lowerMsg.includes('overview') || lowerMsg.includes('stats')) {
+    return {
+      shouldCallTool: true,
+      tool: 'getDashboardStats',
+      parameters: {},
+      confidence: 0.9,
+      reason: 'Matched dashboard request',
+      isMock: true,
+    };
+  }
+  if (lowerMsg.includes('agenda') || lowerMsg.includes("today's schedule") || lowerMsg.includes('what do i have') || lowerMsg.includes("what's on my agenda")) {
+    return {
+      shouldCallTool: true,
+      tool: 'getTodaysAgenda',
+      parameters: {},
+      confidence: 0.9,
+      reason: 'Matched agenda request',
+      isMock: true,
+    };
+  }
+  if (lowerMsg.includes('calendar') || lowerMsg.includes('events')) {
+    return {
+      shouldCallTool: true,
+      tool: 'getCalendarEvents',
+      parameters: {},
+      confidence: 0.9,
+      reason: 'Matched calendar request',
+      isMock: true,
+    };
+  }
+  
+  // Step 2: Detect entity type
+  const entityType = detectEntityType(message);
+  if (!entityType) {
+    return { shouldCallTool: false, isMock: true };
+  }
+  
+  // Step 2: Detect intent type based on priority
+  const intentDetection = detectIntentType(message);
+  if (!intentDetection) {
+    return { shouldCallTool: false, isMock: true };
+  }
+  
+  const intentType = intentDetection.intentType;
+  
+  // Step 3: Calculate confidence score
+  const confidence = calculateConfidence(message, intentType, entityType);
+  
+  // Step 4: If confidence is too low, return needsClarification
+  if (confidence < MIN_CONFIDENCE_THRESHOLD) {
+    return {
+      shouldCallTool: false,
+      needsClarification: true,
+      confidence,
+      reason: 'Confidence below threshold',
+      isMock: true,
+    };
+  }
+  
+  // Step 5: Map intent + entity to tool
+  const intentConfig = INTENT_PRIORITIES[intentType];
+  const tool = intentConfig.tools[entityType];
+  
+  if (!tool) {
+    return { shouldCallTool: false, isMock: true };
+  }
+  
+  // Step 6: Build result with parameters
+  const result = {
+    shouldCallTool: true,
+    tool,
+    parameters: {},
+    confidence,
+    reason: `Matched intent '${intentType}' with entity '${entityType}' (confidence: ${confidence.toFixed(2)})`,
+    isMock: true,
+  };
+  
+  // Step 7: Extract parameters based on tool type
+  if (tool === 'createTask' || tool === 'createMeeting' || tool === 'createProject' || tool === 'createFollowUp' || tool === 'createGoal' || tool === 'createKnowledge' || tool === 'createWorkLog') {
+    // Creation tools - extract title
+    const title = extractTitleFromMessage(message, intentType, entityType);
+    if (title) {
+      result.parameters.title = title;
+    }
+    
+    // Extract date
+    const date = extractDateFromText(message);
+    if (date) {
+      result.parameters.deadline = date;
+      result.parameters.startDate = date;
+    }
+    
+    // Extract time
+    const time = extractTimeFromText(message);
+    if (time) {
+      result.parameters.time = time;
+    }
+    
+    // Extract priority
+    const priority = extractPriorityFromText(message);
+    if (priority) {
+      result.parameters.priority = priority;
+    }
+    
+    // Determine missing parameters
+    if (!title) {
+      result.missingParameters = ['title'];
+    }
+  } else if (tool === 'updateTask' || tool === 'updateMeeting' || tool === 'updateProject' || tool === 'updateFollowUp' || tool === 'updateGoal' || tool === 'updateKnowledge' || tool === 'updateWorkLog') {
+    // Update tools - extract target identifier
+    const target = extractTargetIdentifier(message, conversationHistory);
+    if (target.type === 'reference') {
+      result.parameters.id = target.value;
+    } else if (target.type === 'explicit') {
+      result.parameters.id = target.value;
+    } else {
+      result.missingParameters = ['id'];
+    }
+    
+    // Extract update values
+    if (lowerMsg.includes('priority')) {
+      const priority = extractPriorityFromText(message);
+      if (priority) result.parameters.priority = priority;
+    }
+  } else if (tool === 'deleteTask' || tool === 'deleteMeeting' || tool === 'deleteProject' || tool === 'deleteFollowUp' || tool === 'deleteGoal' || tool === 'deleteKnowledge' || tool === 'deleteWorkLog') {
+    // Delete tools - extract target identifier
+    const target = extractTargetIdentifier(message, conversationHistory);
+    if (target.type === 'reference') {
+      result.parameters.id = target.value;
+    } else if (target.type === 'explicit') {
+      result.parameters.id = target.value;
+    } else {
+      result.missingParameters = ['id'];
+    }
+  } else if (tool === 'completeTask') {
+    // Complete tool - extract target identifier
+    const target = extractTargetIdentifier(message, conversationHistory);
+    if (target.type === 'reference') {
+      result.parameters.id = target.value;
+    } else if (target.type === 'explicit') {
+      result.parameters.id = target.value;
+    } else {
+      result.missingParameters = ['id'];
     }
   }
-
-  // Step 2: Fallback to pattern matching for other intents
-  for (const pattern of MOCK_INTENT_PATTERNS) {
-    if (pattern.keywords.some((kw) => lowerMsg.includes(kw))) {
-      const result = {
-        shouldCallTool: true,
-        tool: pattern.tool,
-        parameters: {},
-        reason: `Matched keyword pattern for ${pattern.tool}`,
-        isMock: true,
-      };
-
-      // Extract parameters from message
-      if (pattern.tool === 'createTask') {
-        const title = extractTitleFromMessage(message);
-        if (title) {
-          result.parameters.title = title;
-          result.missingParameters = pattern.missingParameters.filter(p => p !== 'title');
-        } else {
-          result.missingParameters = pattern.missingParameters;
-        }
-        
-        const date = extractDateFromText(message);
-        if (date) result.parameters.deadline = date;
-        
-        const priority = extractPriorityFromText(message);
-        if (priority) result.parameters.priority = priority;
-      } else if (pattern.tool === 'updateTask') {
-        result.missingParameters = pattern.missingParameters;
-      } else {
-        if (pattern.missingParameters && pattern.missingParameters.length > 0) {
-          result.missingParameters = pattern.missingParameters;
-        }
-      }
-
-      return result;
-    }
-  }
-
-  return { shouldCallTool: false, isMock: true };
+  
+  return result;
 }
 
 // ============================================================
@@ -534,6 +791,8 @@ async function openAIFunctionCalling({ message, conversationHistory = [], apiKey
  * @property {string[]} [missingParameters] - Required params that are missing.
  * @property {string}  [reason]            - Engine decision reasoning.
  * @property {boolean} isMock             - Whether mock fallback was used.
+ * @property {number}  [confidence]       - Confidence score (0-1).
+ * @property {boolean} [needsClarification] - Whether clarification is needed.
  */
 export async function selectTool({ message, conversationHistory = [] }) {
   const apiKey = process.env.OPENAI_API_KEY?.trim() || null;
@@ -548,12 +807,12 @@ export async function selectTool({ message, conversationHistory = [] }) {
 
       // Graceful degradation to mock on provider errors
       console.warn('[FunctionCalling] Falling back to mock matcher due to provider error.');
-      return mockFunctionCalling(message);
+      return mockFunctionCalling(message, conversationHistory);
     }
   }
 
   // Fallback: mock keyword-based matcher (no API key configured)
-  return mockFunctionCalling(message);
+  return mockFunctionCalling(message, conversationHistory);
 }
 
 /**

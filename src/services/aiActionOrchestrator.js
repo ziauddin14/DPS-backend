@@ -1,18 +1,18 @@
 /**
  * DPS AI Action Orchestrator
  *
- * Integrates Function Calling → Tool Executor → Response Generator
+ * Integrates Groq Native Function Calling → Tool Executor → Natural Language Response
  * to enable autonomous AI actions within DPS.
  *
  * Flow:
- *   User Message → Function Calling (select tool) → Tool Executor (execute) → Response Generator (format)
+ *   User Message → Groq Provider (native tool calling) → Tool Executor → Groq Final Response
  *
  * Handles conversation context for references like "that task", "it", "the project", etc.
  */
 
-import { selectTool } from './functionCalling.js';
 import { executeTool, getExecutionLogs } from './toolExecutor.js';
 import { generateResponse } from './responseGenerator.js';
+import { groqProvider } from './providers/groqProvider.js';
 
 // ============================================================
 //  PENDING TOOL CALL STATE (BUG #6 fix)
@@ -364,60 +364,21 @@ export async function orchestrateAction({ message, conversationHistory = [], con
     };
   }
 
-  // 4. Use Function Calling to select tool
-  const functionCallResult = await selectTool({
+  // 4. Use Groq Native Function Calling
+  const groqResult = await groqProvider.generate({
     message: resolvedMessage,
     conversationHistory,
-  });
-
-  // 5. If no tool selected, return conversational response
-  if (!functionCallResult.shouldCallTool) {
-    return {
-      reply: null, // Signal to use normal AI conversation
-      suggestions: [],
-      status: 'conversation',
-      isAction: false,
-    };
-  }
-
-  // 6. If missing parameters, ask user for them (BUG #6 fix)
-  if (functionCallResult.missingParameters && functionCallResult.missingParameters.length > 0) {
-    // Store the pending tool call for immediate execution when user responds
-    if (conversationId) {
-      storePendingToolCall(conversationId, functionCallResult.tool, functionCallResult.parameters);
-    }
-    
-    const response = generateResponse({
-      toolResult: functionCallResult,
-      originalPrompt: message,
-      conversationHistory,
-    });
-    return {
-      ...response,
-      toolUsed: functionCallResult.tool,
-      isAction: true,
-    };
-  }
-
-  // 7. Execute the tool through Tool Executor
-  const executionResult = await executeTool({
-    tool: functionCallResult.tool,
-    parameters: functionCallResult.parameters,
     conversationId,
   });
 
-  // 8. Generate natural language response
-  const response = generateResponse({
-    toolResult: executionResult,
-    originalPrompt: message,
-    conversationHistory,
-  });
-
+  // 5. Return Groq's response (already includes natural language formatting)
   return {
-    ...response,
-    toolUsed: functionCallResult.tool,
-    isAction: true,
-    executionResult,
+    reply: groqResult.reply,
+    suggestions: [], // Groq handles suggestions in its response
+    status: 'success',
+    isAction: !!groqResult.toolUsed, // isAction if a tool was used
+    toolUsed: groqResult.toolUsed || null,
+    executionResult: null, // Groq handles execution internally
   };
 }
 
