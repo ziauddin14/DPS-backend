@@ -639,4 +639,7 @@ export const toolExecutor = {
   clearExecutionLogs,
 };
 
+// Export HANDLERS for backward compatibility with separate tool files
+export { HANDLERS };
+
 export default toolExecutor;
