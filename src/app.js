@@ -20,7 +20,7 @@ const app = express();
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://dps-ai.vercel.app/'
+    'https://dps-ai.vercel.app'
   ]
 }));
 app.use(express.json());
