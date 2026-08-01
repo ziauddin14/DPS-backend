@@ -295,91 +295,150 @@ async function generateTodaysAgenda(conversationId) {
  * @returns {Promise<object>} Orchestrated response with reply, suggestions, status
  */
 export async function orchestrateAction({ message, conversationHistory = [], conversationId = null }) {
-  // BUG #6: Check if there's a pending tool call awaiting missing parameters
-  if (conversationId && hasPendingToolCall(conversationId)) {
-    const pending = getPendingToolCall(conversationId);
-    
-    // Extract the missing parameter value from the user's response
-    // For simplicity, we'll treat the entire message as the missing value
-    // In production, this would be more sophisticated
-    const missingParam = pending.tool === 'createTask' ? 'title' : 
-                        pending.tool === 'createMeeting' ? 'title' :
-                        pending.tool === 'createGoal' ? 'title' :
-                        pending.tool === 'createProject' ? 'title' :
-                        pending.tool === 'createFollowUp' ? 'title' : 'title';
-    
-    // Merge the provided parameter with existing parameters
-    const mergedParameters = { ...pending.parameters };
-    mergedParameters[missingParam] = message.trim();
-    
-    // Execute the tool with the complete parameters
-    const executionResult = await executeTool({
-      tool: pending.tool,
-      parameters: mergedParameters,
+  console.log('[aiActionOrchestrator] === ORCHESTRATE ACTION START ===');
+  console.log('[aiActionOrchestrator] Input params:', JSON.stringify({
+    message: message?.substring(0, 100),
+    conversationHistoryLength: conversationHistory?.length || 0,
+    conversationId,
+  }));
+  
+  try {
+    // BUG #6: Check if there's a pending tool call awaiting missing parameters
+    console.log('[aiActionOrchestrator] Step 1: Check for pending tool call');
+    if (conversationId && hasPendingToolCall(conversationId)) {
+      console.log('[aiActionOrchestrator] Pending tool call found for conversationId:', conversationId);
+      const pending = getPendingToolCall(conversationId);
+      console.log('[aiActionOrchestrator] Pending tool call:', JSON.stringify(pending));
+      
+      // Extract the missing parameter value from the user's response
+      // For simplicity, we'll treat the entire message as the missing value
+      // In production, this would be more sophisticated
+      const missingParam = pending.tool === 'createTask' ? 'title' : 
+                          pending.tool === 'createMeeting' ? 'title' :
+                          pending.tool === 'createGoal' ? 'title' :
+                          pending.tool === 'createProject' ? 'title' :
+                          pending.tool === 'createFollowUp' ? 'title' : 'title';
+      
+      console.log('[aiActionOrchestrator] Missing param:', missingParam);
+      
+      // Merge the provided parameter with existing parameters
+      const mergedParameters = { ...pending.parameters };
+      mergedParameters[missingParam] = message.trim();
+      console.log('[aiActionOrchestrator] Merged parameters:', JSON.stringify(mergedParameters));
+      
+      // Execute the tool with the complete parameters
+      console.log('[aiActionOrchestrator] Executing tool with pending parameters');
+      const executionResult = await executeTool({
+        tool: pending.tool,
+        parameters: mergedParameters,
+        conversationId,
+      });
+      console.log('[aiActionOrchestrator] Tool execution result:', JSON.stringify({
+        success: executionResult.success,
+        tool: executionResult.tool,
+      }));
+      
+      // Generate natural language response
+      console.log('[aiActionOrchestrator] Generating response from tool result');
+      const response = generateResponse({
+        toolResult: executionResult,
+        originalPrompt: message,
+        conversationHistory,
+      });
+      console.log('[aiActionOrchestrator] Response generated');
+      
+      const result = {
+        ...response,
+        toolUsed: pending.tool,
+        isAction: true,
+        executionResult,
+      };
+      console.log('[aiActionOrchestrator] Returning pending tool call result');
+      return result;
+    }
+    console.log('[aiActionOrchestrator] No pending tool call found');
+
+    // 1. Extract conversation context
+    console.log('[aiActionOrchestrator] Step 2: Extract conversation context');
+    const context = extractContextFromHistory(conversationHistory);
+    console.log('[aiActionOrchestrator] Context extracted:', JSON.stringify(context));
+
+    // 2. Resolve pronoun references
+    console.log('[aiActionOrchestrator] Step 3: Resolve pronoun references');
+    const resolvedMessage = resolveReferences(message, context);
+    console.log('[aiActionOrchestrator] Original message:', message);
+    console.log('[aiActionOrchestrator] Resolved message:', resolvedMessage);
+
+    // 3. Check for special agenda requests
+    console.log('[aiActionOrchestrator] Step 4: Check for agenda requests');
+    const lowerMessage = resolvedMessage.toLowerCase();
+    if (
+      lowerMessage.includes('agenda') ||
+      lowerMessage.includes('what do i have') ||
+      lowerMessage.includes("what's on my agenda") ||
+      lowerMessage.includes('today\'s schedule') ||
+      lowerMessage.includes('today\'s tasks') ||
+      lowerMessage.includes('today\'s meetings') ||
+      lowerMessage.includes('today\'s follow-ups')
+    ) {
+      console.log('[aiActionOrchestrator] Agenda request detected');
+      const agendaResult = await generateTodaysAgenda(conversationId);
+      console.log('[aiActionOrchestrator] Agenda generated');
+      const response = generateResponse({
+        toolResult: agendaResult,
+        originalPrompt: message,
+        conversationHistory,
+      });
+      console.log('[aiActionOrchestrator] Agenda response generated');
+      const result = {
+        ...response,
+        toolUsed: 'getTodaysAgenda',
+        isAction: true,
+      };
+      console.log('[aiActionOrchestrator] Returning agenda result');
+      return result;
+    }
+    console.log('[aiActionOrchestrator] No agenda request detected');
+
+    // 4. Use Groq Native Function Calling
+    console.log('[aiActionOrchestrator] Step 5: Calling groqProvider.generate');
+    console.log('[aiActionOrchestrator] Groq params:', {
+      message: resolvedMessage?.substring(0, 100),
+      conversationHistoryLength: conversationHistory?.length || 0,
       conversationId,
     });
-    
-    // Generate natural language response
-    const response = generateResponse({
-      toolResult: executionResult,
-      originalPrompt: message,
+    const groqResult = await groqProvider.generate({
+      message: resolvedMessage,
       conversationHistory,
+      conversationId,
     });
-    
-    return {
-      ...response,
-      toolUsed: pending.tool,
-      isAction: true,
-      executionResult,
+    console.log('[aiActionOrchestrator] Groq result returned:', JSON.stringify({
+      reply: groqResult.reply?.substring(0, 100),
+      toolUsed: groqResult.toolUsed,
+      finishReason: groqResult.finishReason,
+      provider: groqResult.provider,
+    }));
+
+    // 5. Return Groq's response (already includes natural language formatting)
+    const result = {
+      reply: groqResult.reply,
+      suggestions: [], // Groq handles suggestions in its response
+      status: 'success',
+      isAction: !!groqResult.toolUsed, // isAction if a tool was used
+      toolUsed: groqResult.toolUsed || null,
+      executionResult: null, // Groq handles execution internally
     };
+    console.log('[aiActionOrchestrator] Returning Groq result');
+    console.log('[aiActionOrchestrator] === ORCHESTRATE ACTION END ===');
+    return result;
+  } catch (error) {
+    console.error('[aiActionOrchestrator] === ORCHESTRATE ACTION ERROR ===');
+    console.error('[aiActionOrchestrator] Error name:', error.name);
+    console.error('[aiActionOrchestrator] Error message:', error.message);
+    console.error('[aiActionOrchestrator] Error stack:', error.stack);
+    console.error('[aiActionOrchestrator] Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    throw error; // Re-throw to be caught by aiController
   }
-
-  // 1. Extract conversation context
-  const context = extractContextFromHistory(conversationHistory);
-
-  // 2. Resolve pronoun references
-  const resolvedMessage = resolveReferences(message, context);
-
-  // 3. Check for special agenda requests
-  const lowerMessage = resolvedMessage.toLowerCase();
-  if (
-    lowerMessage.includes('agenda') ||
-    lowerMessage.includes('what do i have') ||
-    lowerMessage.includes("what's on my agenda") ||
-    lowerMessage.includes('today\'s schedule') ||
-    lowerMessage.includes('today\'s tasks') ||
-    lowerMessage.includes('today\'s meetings') ||
-    lowerMessage.includes('today\'s follow-ups')
-  ) {
-    const agendaResult = await generateTodaysAgenda(conversationId);
-    const response = generateResponse({
-      toolResult: agendaResult,
-      originalPrompt: message,
-      conversationHistory,
-    });
-    return {
-      ...response,
-      toolUsed: 'getTodaysAgenda',
-      isAction: true,
-    };
-  }
-
-  // 4. Use Groq Native Function Calling
-  const groqResult = await groqProvider.generate({
-    message: resolvedMessage,
-    conversationHistory,
-    conversationId,
-  });
-
-  // 5. Return Groq's response (already includes natural language formatting)
-  return {
-    reply: groqResult.reply,
-    suggestions: [], // Groq handles suggestions in its response
-    status: 'success',
-    isAction: !!groqResult.toolUsed, // isAction if a tool was used
-    toolUsed: groqResult.toolUsed || null,
-    executionResult: null, // Groq handles execution internally
-  };
 }
 
 /**

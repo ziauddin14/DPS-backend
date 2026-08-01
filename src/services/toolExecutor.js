@@ -496,10 +496,21 @@ const HANDLERS = {
  * @property {string[]} [missingParameters] - Missing required parameter names.
  */
 export async function executeTool({ tool, parameters = {}, conversationId = null }) {
+  console.log('[toolExecutor] === EXECUTE TOOL START ===');
+  console.log('[toolExecutor] Input params:', JSON.stringify({
+    tool,
+    parameters,
+    conversationId,
+  }));
+  
   const startTime = Date.now();
 
   // 1. Tool existence validation
+  console.log('[toolExecutor] Step 1: Tool existence validation');
+  console.log('[toolExecutor] Tool name:', tool);
+  console.log('[toolExecutor] Tool exists:', toolExists(tool));
   if (!tool || !toolExists(tool)) {
+    console.log('[toolExecutor] Tool does not exist in registry');
     const errorMsg = `Unknown tool: '${tool}'. Tool is not registered in the AI Tool Registry.`;
     const executionTimeMs = Date.now() - startTime;
 
@@ -512,31 +523,44 @@ export async function executeTool({ tool, parameters = {}, conversationId = null
       error: errorMsg,
     });
 
+    console.log('[toolExecutor] Returning error: unknown tool');
+    console.log('[toolExecutor] === EXECUTE TOOL END ===');
     return {
       success: false,
       tool: tool || 'unknown',
       error: errorMsg,
     };
   }
+  console.log('[toolExecutor] Tool exists in registry');
 
   const toolDef = getTool(tool);
+  console.log('[toolExecutor] Tool definition retrieved:', JSON.stringify({
+    name: toolDef.name,
+    category: toolDef.category,
+    parameterCount: Object.keys(toolDef.parameters || {}).length,
+  }));
 
   // 2. Validate required parameters
+  console.log('[toolExecutor] Step 2: Validate required parameters');
   const missingParameters = [];
   if (toolDef && toolDef.parameters) {
     for (const [paramName, paramDef] of Object.entries(toolDef.parameters)) {
+      console.log('[toolExecutor] Checking parameter:', paramName, 'required:', paramDef.required, 'value:', parameters[paramName]);
       if (
         paramDef.required &&
         (parameters[paramName] === undefined ||
           parameters[paramName] === null ||
           (typeof parameters[paramName] === 'string' && !parameters[paramName].trim()))
       ) {
+        console.log('[toolExecutor] Missing required parameter:', paramName);
         missingParameters.push(paramName);
       }
     }
   }
+  console.log('[toolExecutor] Missing parameters:', missingParameters);
 
   if (missingParameters.length > 0) {
+    console.log('[toolExecutor] Validation failed: missing required parameters');
     const errorMsg = `Missing required parameter(s): ${missingParameters.join(', ')}.`;
     const executionTimeMs = Date.now() - startTime;
 
@@ -549,6 +573,8 @@ export async function executeTool({ tool, parameters = {}, conversationId = null
       error: errorMsg,
     });
 
+    console.log('[toolExecutor] Returning error: missing parameters');
+    console.log('[toolExecutor] === EXECUTE TOOL END ===');
     return {
       success: false,
       tool,
@@ -556,10 +582,14 @@ export async function executeTool({ tool, parameters = {}, conversationId = null
       missingParameters,
     };
   }
+  console.log('[toolExecutor] Parameter validation passed');
 
   // 3. Dispatch execution to handler
+  console.log('[toolExecutor] Step 3: Dispatch to handler');
   const handler = HANDLERS[tool];
+  console.log('[toolExecutor] Handler exists:', !!handler);
   if (!handler) {
+    console.log('[toolExecutor] Handler not implemented for tool:', tool);
     const errorMsg = `Handler mapping for tool '${tool}' is not implemented.`;
     const executionTimeMs = Date.now() - startTime;
 
@@ -572,16 +602,24 @@ export async function executeTool({ tool, parameters = {}, conversationId = null
       error: errorMsg,
     });
 
+    console.log('[toolExecutor] Returning error: handler not implemented');
+    console.log('[toolExecutor] === EXECUTE TOOL END ===');
     return {
       success: false,
       tool,
       error: errorMsg,
     };
   }
+  console.log('[toolExecutor] Handler found, executing');
 
   try {
+    console.log('[toolExecutor] Step 4: Execute handler');
     const result = await handler(parameters);
     const executionTimeMs = Date.now() - startTime;
+    console.log('[toolExecutor] Handler execution completed');
+    console.log('[toolExecutor] Execution time:', executionTimeMs, 'ms');
+    console.log('[toolExecutor] Result type:', typeof result);
+    console.log('[toolExecutor] Result keys:', Object.keys(result || {}).join(', '));
 
     recordAuditLog({
       conversationId,
@@ -591,13 +629,22 @@ export async function executeTool({ tool, parameters = {}, conversationId = null
       parameters,
     });
 
-    return {
+    const response = {
       success: true,
       tool,
       result,
       message: `Tool '${tool}' executed successfully.`,
     };
+    console.log('[toolExecutor] Returning success');
+    console.log('[toolExecutor] === EXECUTE TOOL END ===');
+    return response;
   } catch (err) {
+    console.error('[toolExecutor] === EXECUTE TOOL ERROR ===');
+    console.error('[toolExecutor] Error name:', err.name);
+    console.error('[toolExecutor] Error message:', err.message);
+    console.error('[toolExecutor] Error stack:', err.stack);
+    console.error('[toolExecutor] Full error object:', JSON.stringify(err, Object.getOwnPropertyNames(err)));
+    
     const executionTimeMs = Date.now() - startTime;
     const errorMsg = err.message || `Execution failed for tool '${tool}'.`;
 
@@ -610,6 +657,8 @@ export async function executeTool({ tool, parameters = {}, conversationId = null
       error: errorMsg,
     });
 
+    console.log('[toolExecutor] Returning error from handler execution');
+    console.log('[toolExecutor] === EXECUTE TOOL END ===');
     return {
       success: false,
       tool,
