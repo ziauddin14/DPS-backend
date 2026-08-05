@@ -25,7 +25,7 @@ const TaskSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: {
-        values: ['Pending', 'In Progress', 'Completed'],
+        values: ['Pending', 'In Progress', 'Completed', 'Overdue'],
         message: '{VALUE} is not a valid status',
       },
       default: 'Pending',
@@ -44,6 +44,11 @@ const TaskSchema = new mongoose.Schema(
     },
     deadline: {
       type: Date,
+    },
+    delayReason: {
+      type: String,
+      default: '',
+      maxlength: [1000, 'Delay reason cannot exceed 1000 characters'],
     },
     completed: {
       type: Boolean,

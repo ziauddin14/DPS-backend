@@ -9,7 +9,7 @@ import { sendSuccess, sendError } from '../utils/apiResponse.js';
  * @access  Public
  */
 export const getAllTasks = asyncHandler(async (req, res) => {
-  const { search, priority, status, category, department, dependency } = req.query;
+  const { search, priority, status, category, department, dependency, month } = req.query;
   const filter = {};
 
   // Search inside title or description (case-insensitive regex)
@@ -40,6 +40,20 @@ export const getAllTasks = asyncHandler(async (req, res) => {
 
   if (dependency && dependency !== 'All') {
     filter.dependency = { $in: [dependency] };
+  }
+
+  // Month filter - filter tasks by deadline month
+  if (month && month !== 'All') {
+    const monthIndex = parseInt(month, 10);
+    if (!isNaN(monthIndex) && monthIndex >= 0 && monthIndex <= 11) {
+      const currentYear = new Date().getFullYear();
+      const startDate = new Date(currentYear, monthIndex, 1);
+      const endDate = new Date(currentYear, monthIndex + 1, 0, 23, 59, 59, 999);
+      filter.deadline = {
+        $gte: startDate,
+        $lte: endDate
+      };
+    }
   }
 
   const tasks = await Task.find(filter).sort({ createdAt: -1 });
@@ -79,7 +93,7 @@ export const getTaskById = asyncHandler(async (req, res) => {
  */
 export const createTask = asyncHandler(async (req, res) => {
   
-  const { title, description, priority, status, category, department, dependency, deadline, completed } = req.body;
+  const { title, description, priority, status, category, department, dependency, deadline, delayReason, completed } = req.body;
 
   // Validation
   if (!title) {
@@ -104,6 +118,7 @@ export const createTask = asyncHandler(async (req, res) => {
       department,
       dependency: dependencyArray,
       deadline,
+      delayReason,
       completed,
     });
 
